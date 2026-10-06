@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data.Choice - именованные логические типы</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!------------------------------------------------------------------>
+
+    <h1>Data.Choice</h1>
+
+    <p>
+        Этот модуль создан для решения проблемы "булевой слепоты" (boolean blindness).
+        Когда функция принимает значения типа <code>Bool</code>, в коде вызова (например, <code>foo True False</code>)
+        абсолютно неясно, за что отвечают эти флаги. Тип <code>Data.Choice</code> заменяет их
+        на именованные логические типы (labeled booleans), а находится он в пакете <code>choice</code>
+    </p>
+
+<!------------------------------------------------------------------>
+
+    <h2>Необходимые расширения</h2>
+
+    <p>Для базовой работы понадобятся следующие языковые расширения:</p>
+
+<pre><code>{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE PatternSynonyms #-}</code></pre>
+
+<!------------------------------------------------------------------>
+
+    <h2>Пример использования</h2>
+
+    <p>Вместо <code>Bool</code> в типе функции указывается <code>Choice "имя_флага"</code> (где "имя_флага" обозначает 
+        назначение замещённого булевого аргумента - для чего он используется), а для значений 
+     используются разные конструкторы, вроде <code>Is</code> (который соответствует
+    значению <code>True</code>) и <code>Isn't</code> (для <code>False</code>) вместе с меткой <code>#имя_флага</code> (имя
+     внутри метки должно соответствовать имени, указанному в типе <code>Choice</code>). 
+    Есть и другие конструкторы, но их мы рассмотрим позже. Пример:</p>
+
+<pre><code>logMessage :: String -&gt; Choice "verbose" -&gt; IO ()
+logMessage msg (Is #verbose) = putStrLn $ "[LOG][DEBUG]: " ++ msg
+logMessage msg (Isn't #verbose) = putStrLn msg</code></pre>
+
+    <p>
+        Здесь <code>#verbose</code> - это перегруженная метка типа (overloaded label), которая "связывает"
+        переданное значение с именем флага.
+    </p>
+
+    <p>При вызове функции сразу становится очевидно, какой флаг передаётся (в данном случае - <code>verbose</code>) и в каком 
+        состоянии (<code>Is</code> для состояния <code>True</code> и <code>Isn't</code> для <code>False</code>):</p>
+
+<pre><code>main :: IO ()
+main = do
+  logMessage "Система запущена" (Is #verbose)
+  logMessage "Просто текст" (Isn't #verbose)</code></pre>
+
+    <p>
+        Если попытаться передать туда флаг с другим именем (например, <code>Is #debug</code>),
+        компилятор выдаст ошибку на этапе компиляции, защищая вас от ошибок.
+    </p>
+
+<!------------------------------------------------------------------>
+
+    <h2>Устройство Choice</h2>
+
+    <p>Так написано в исходниках:</p>
+
+<pre><code>data Choice (a :: Symbol)
+  = Off {-# UNPACK #-} !(Label a)
+  | On {-# UNPACK #-} !(Label a)
+  deriving (Eq, Ord, Generic, Typeable)</code></pre>
+
+    <p>
+        Как видно, здесь всего пара конструкторов <code>Off</code> и <code>On</code>, которые соответствуют
+        значениям <code>False</code> и <code>True</code> соответственно. Сам тип <code>Choice</code>
+        параметризован переменной типа с кайндом <code>Symbol</code>, т.е. строкой на уровне типов,
+        которая определяет тип <code>Label</code>.
+    </p>
+
+    <p>
+        Здесь используется прагма <code>{-# UNPACK #-}</code> для указания компилятору GHC оптимизировать память,
+        убрав лишние ссылки (указатели) и встроив данные напрямую. То есть прагма позволяет хранить содержимое поля непосредственно в конструкторе,
+        без отдельного указателя на heap.
+    </p>
+
+    <div class="note">
+        <strong>Замечание.</strong> Для использования прагмы должны быть соблюдены два условия:
+        <ul>
+            <li>
+                <strong>Поле должно быть строгим (strict)</strong> - перед типом обязательно должен стоять
+                восклицательный знак (<code>!</code>). Это гарантирует, что данные не ленивые и вычисляются сразу.
+            </li>
+            <li>
+                <strong>Тип должен иметь чёткие границы</strong> - компилятор должен точно знать размер
+                распаковываемых данных во время сборки.
+            </li>
+        </ul>
+        Это мы и видим в объявлении выше.
+    </div>
+
+<!------------------------------------------------------------------>
+
+    <h2>Что такое Label</h2>
+
+    <p>По сути Label - это аналог Proxy, но несёт информацию на уровне типа исключительно в виде строки (кайнд Symbol). Оба типа - фантомные. У них нет полезных данных в рантайме, они существуют только чтобы "протащить" тип. Определение Label:</p>
+
+<pre><code>data Label (a :: Symbol) = Label deriving (Eq, Ord, Show)</code></pre>
+
+    <p>
+        Как видно, конструктор здесь один.
+    </p>
+
+<!------------------------------------------------------------------>
+
+    <h2>Как создавать значения</h2>
+
+    <p>Паттерны ниже символизируют True:</p>
+
+<pre><code>pattern Do      :: Label a -&gt; Choice a
+pattern Is      :: Label a -&gt; Choice a
+pattern With    :: Label a -&gt; Choice a
+pattern Must    :: Label a -&gt; Choice a
+pattern Can     :: Label a -&gt; Choice a
+pattern Should  :: Label a -&gt; Choice a</code></pre>
+
+    <p>
+        Имена у них разные для самых разных случаев, но все они реализованы одинаково -
+        через конструктор <code>On</code>, например:
+    </p>
+
+<pre><code>pattern Do x = On x
+-- pattern With x = On x
+-- ...</code></pre>
+
+<!------------------------------------------------------------------>
+
+    <p>Паттерны ниже символизируют False:</p>
+
+<pre><code>pattern Don't     :: Label a -&gt; Choice a
+pattern Isn't     :: Label a -&gt; Choice a
+pattern Without   :: Label a -&gt; Choice a
+pattern Mustn't   :: Label a -&gt; Choice a
+pattern Can't     :: Label a -&gt; Choice a
+pattern Shouldn't :: Label a -&gt; Choice a</code></pre>
+
+    <p>
+        Они тоже реализованы одинаково - через конструктор <code>Off</code>, например:
+    </p>
+
+<pre><code>pattern Don't x = Off x
+-- pattern Without x = Off x
+-- ...</code></pre>
+
+    <p>
+        Т.е. в один из этих паттернов передаётся метка (конструктор у неё только один -
+        <code>Label</code>, и сам тип параметризован строкой), а она передаётся конструктору
+        <code>Choice</code>, который будет параметризован строкой из метки.
+    </p>
+
+<!------------------------------------------------------------------>
+
+    <h2>Как работает #label</h2>
+
+    <p>
+        Синтаксис <code>#имя_метки</code> (например, <code>#block</code>, <code>#ssl</code>,
+        <code>#admin</code>) - это перегруженная метка. Она появилась в Haskell
+        благодаря языковому расширению <code>{-# LANGUAGE OverloadedLabels #-}</code>.
+        Когда компилятор встречает метку вроде <code>#block</code>, он автоматически раскрывает его
+        в вызов специального метода <code>fromLabel</code>:
+    </p>
+
+<pre><code>-- Пишем:
+#block
+
+-- GHC превращает это в:
+fromLabel @"block"</code></pre>
+
+    <p>
+        Символ <code>@</code> означает применение типа "напрямую" (type applications). То есть строка
+        <code>"block"</code> "уходит внутрь" системы типов как <code>Symbol</code> - она становится значением для переменной типа
+        в классе типов (увидим это ниже).
+    </p>
+
+<!------------------------------------------------------------------>
+
+    <h2>Класс IsLabel</h2>
+
+    <p>
+        Что это за <code>fromLabel</code>? Он из модуля <code>GHC.OverloadedLabels</code>, где
+        определён такой класс:
+    </p>
+
+<pre><code>-- неявно:
+-- class forall x a. IsLabel (x :: Symbol) a where ...
+
+class IsLabel (x :: Symbol) a where
+  fromLabel :: a</code></pre>
+
+    <p>
+        У метода нет аргументов, а какой именно экземпляр вызвать, определяется парой
+        <code>(x, a)</code> - обе переменные должны выводиться из вызова. При вызове мы можем
+        передать значение для скрытого параметра <code>x</code> через <code>@something</code>.
+        Можно было бы и для <code>a</code> - но это избыточно в данном случае, т.е. его тип очевиден из места вызова.
+    </p>
+    <p>
+        То есть при вызове метода мы передаём аргументы (их типы известны) и типы через
+        <code>@</code> (если в этом есть необходимость), и по всему этому набору определяется, 
+        метод какого именно инстанса выбрать.
+    </p>
+    <p>
+        Неявный <code>forall</code> перечисляет параметры класса строго по порядку слева направо:
+        сначала <code>x</code>, потом <code>a</code>. Поэтому, когда мы пишем
+        <code>fromLabel @"block"</code>, тип <code>"block"</code> передаётся в первую переменную
+        в <code>forall</code>, то есть в <code>x</code>. Если бы мы захотели передать ещё и тип
+        результата <code>a</code> руками, можно было бы использовать второй <code>@</code>:
+        <code>fromLabel @"block" @(Label "block")</code>.
+    </p>
+
+<!------------------------------------------------------------------>
+
+    <h2>Реализация инстанса</h2>
+
+    <p>
+        Метод <code>fromLabel</code> вызывается в паттернах, которые требуют в качестве первого аргумента 
+        значение типа <code>Label x</code>,
+        а это значит, что модуль должен реализовать этот класс для данного типа,
+        и он это делает так:
+    </p>
+
+<pre><code>-- неявно:
+-- instance forall x x'. x ~ x' =&gt; IsLabel x (Label x') where
+
+instance x ~ x' =&gt; IsLabel x (Label x') where
+  fromLabel = Label</code></pre>
+
+    <p>
+        В Haskell знак тильды <code>~</code> означает ограничение равенства типов (type equality constraint), и оно
+        проверяется во время компиляции. 
+        Запись <code>x ~ x'</code> читается как: "Тип <code>x</code> должен
+        быть абсолютно тем же самым типом, что и <code>x'</code>". Если компилятор обнаружит,
+        что это разные типы, программа не скомпилируется. В целом, конструкция <code>x ~ x'</code>
+        в контексте инстансов классов типов используется как для вывода типов (type inference),
+        так и для их пассивной проверки.
+    </p>
+
+<!------------------------------------------------------------------>
+
+    <p>Как будет работать вызов <code>fromLabel @"something"</code>:</p>
+
+    <ol>
+        <li>Выражение <code>@"something"</code> фиксирует, что <code>x = "something"</code>.</li>
+        <li>
+            Ожидаемый тип выражения определяет, что <code>a</code> имеет тип
+            <code>Label ?</code> для некоторой переменной <code>?</code>.
+        </li>
+        <li>
+            GHC ищет инстанс, который сопоставляется с запросом <code>IsLabel x (Label ?)</code>. Подходит 
+            <code>instance x ~ x' => IsLabel x (Label x')</code> - сопоставление даёт <code>? = x'</code>
+        </li>
+        <li>
+            В инстансе указано ограничение <code>x ~ x'</code>, а это вместе с <code>x = "something"</code> даёт <code>x' = "something"</code>. 
+            Таким образом, возвращаемое значение <code>Label</code> имеет тип <code>Label "something"</code>.
+        </li>
+        <li>
+            Когда значение типа <code>Label "something"</code> передаётся в паттерн <code>Is</code> (типа <code>Label a -> Choice a</code>), 
+            переменная <code>a</code> в <code>Choice a</code> 
+            становится равной <code>"something"</code>, и всё выражение получает тип <code>Choice "something"</code>.
+        </li>
+        <li>
+            Компилятор проверяет, что <code>Choice "something"</code> совпадает с ожидаемым типом.
+        </li>
+    </ol>
+
+<!------------------------------------------------------------------>
+
+    <h2>Утилитные функции</h2>
+
+    <p>
+        Есть ещё полезные утилитные функции. Они позволяют бесшовно переходить от безопасных именованных флагов
+        к стандартным булевым значениям и обратно, а также работать с этими флагами как с булевыми значениями.
+    </p>
+
+<pre><code>fromBool :: forall   (a :: Symbol). Bool -&gt; Choice a
+toBool   :: forall   (a :: Symbol). Choice a -&gt; Bool
+isFalse  :: forall   (a :: Symbol). Choice a -&gt; Bool
+isTrue   :: forall   (a :: Symbol). Choice a -&gt; Bool
+choice   :: forall a (b :: Symbol). a -&gt; a -&gt; Choice b -&gt; a</code></pre>
+
+    <p>
+        Функция <code>fromBool</code> превращает обычный <code>Bool</code> в безопасный именованный флаг (мы 
+        иногда должны указать имя метки через <code>@имя_метки</code>, так как из <code>True</code> или <code>False</code> 
+        компилятор иногда не может сам определить это имя), а
+        <code>toBool</code> превращает флаг обратно в обычный <code>Bool</code>.
+    </p>
+
+    <p>
+        Пример. Представьте, что мы получаем статус из конфигурационного JSON-файла в виде обычного
+        <code>Bool</code>, в своей логике хотим использовать безопасный <code>Choice</code>, а в сторонних библиотеках 
+        требуют опять <code>Bool</code>. Использование этих функций может выглядеть так:
+    </p>
+
+<pre><code>{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedLabels #-}
+
+import Data.Choice (Choice, fromBool, toBool)
+
+main :: IO ()
+main = do
+    let configValue = True -- прилетело из конфига
+
+    -- Превращаем обычный Bool в Choice "useSandbox"
+    -- Переменная a не выводится из Bool, поэтому её нужно задать явно
+    let secureFlag = fromBool @"useSandbox" configValue
+
+    processPayment secureFlag
+
+-- Функция, которая требует безопасный флаг
+processPayment :: Choice "useSandbox" -&gt; IO ()
+processPayment flag = do
+    -- Нам нужно вызвать стороннюю библиотеку, которая принимает только обычный Bool
+    let rawBool = toBool flag
+    print $ "Вызов стороннего API с параметром: " ++ show rawBool
+</code></pre>
+
+    <p>Функции <code>isTrue</code> и <code>isFalse</code> позволяют быстро проверить состояние.</p>
+
+    <p>
+        Эти функции возвращают обычный <code>Bool</code> и нужны для простых проверок
+        (например, внутри стандартных <code>if-then-else</code> выражений), чтобы 
+        не приходилось каждый раз писать <code>case-of</code> с паттернами. Пример использования:
+    </p>
+
+<pre><code>import Data.Choice (Choice, pattern Do, isTrue, isFalse)
+
+checkAccess :: Choice "isAdmin" -&gt; IO ()
+checkAccess flag = do
+    -- Вместо громоздкого case-of пишем простое условие:
+    if isTrue flag
+        then putStrLn "Доступ разрешен в панель администратора."
+        else putStrLn "Отказ в доступе."
+</code></pre>
+
+<!------------------------------------------------------------------>
+
+    <p>Функция <code>choice</code> - функциональный аналог if-then-else - функционально делает ровно то же самое, что 
+        и стандартная
+        функция <code>bool</code> из модуля <code>Data.Bool</code>, но <code>bool</code> работает
+        с <code>Bool</code>, а <code>choice</code> - с <code>Choice b</code>. Она принимает три аргумента:
+    </p>
+
+    <ol>
+        <li>Значение, если флаг <code>Off</code> (то есть <code>False</code>).</li>
+        <li>Значение, если флаг <code>On</code> (то есть <code>True</code>).</li>
+        <li>Сам флаг типа <code>Choice a</code>.</li>
+    </ol>
+
+    <div class="note">
+        <strong>Важно помнить порядок аргументов:</strong> как и в стандартной функции
+        <code>bool</code>, сначала идёт ветка для <code>False</code>, а затем для <code>True</code>.
+        Насколько мне известно, это сделано для удобства каррирования.
+    </div>
+
+<pre><code>{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE PatternSynonyms #-}
+
+import Data.Choice (Choice, pattern Do, pattern Don't, choice)
+
+getLogMessage :: Choice "verbose" -&gt; String
+getLogMessage flag = choice "Краткий лог" "Очень подробный и длинный лог" flag
+
+main :: IO ()
+main = do
+    putStrLn $ getLogMessage (Do #verbose)    -- Выведет: "Очень подробный и длинный лог"
+    putStrLn $ getLogMessage (Don't #verbose) -- Выведет: "Краткий лог"</code></pre>
+
+<!------------------------------------------------------------------>
+
+<hr>
+
+</body>
+</html>
